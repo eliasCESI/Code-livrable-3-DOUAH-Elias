@@ -1,0 +1,683 @@
+# LIBRARIES
+
+from enum import Enum
+import math
+import numpy as np
+from scipy.integrate import odeint
+from typing import Tuple, List
+import matplotlib.pyplot as plt
+
+# CONSTANTES
+
+g = 9.81
+rho = 1.202
+
+class Partie(Enum):
+    """
+    Définition des parties disponibles
+    """
+    AUCUN = -1
+    PENTE = 0
+    LOOPING = 1
+    RAVIN = 2
+    FIN = 3
+
+class Booster:
+    """
+    Représente un booster pour une voiture
+    """
+    def __init__(self, partie: Partie, boost: float = 1.3):
+        """
+        Constructeur
+
+        :param partie: Partie où le booster sera utilisé
+        :param boost: Coeeficient de multiplication de l'accélération, +30% par défaut
+        """
+        self.Utilisé = False
+        self.Partie = partie
+        self.Boost = boost
+
+class Voiture:
+    """
+    Classe représentant une voiture et ses spécificités
+    """
+    def __init__(self, masse: float, accmotor: float, hauteur: float, longueur: float, largeur: float, cx: float, cz: float, frot: float, name: str, booster: Booster, aileron: bool, jupe: bool):
+        """
+        Constructeur
+
+        :param masse: Masse de la voiture (kg)
+        :param accmotor: Accélration moteur (m/s)
+        :param hauteur: Hateur de la voiture (m)
+        :param longueur: Longueur de la voiture (m)
+        :param largeur: Largeur de la voiture (m)
+        :param cx: Coefficient de résistance de l'air dans l'axe X
+        :param cz: Coefficient de résistance de l'air dans l'axe Z
+        :param frot: Coefficient de frottement
+        :param name: Nom de la voiture
+        :param booster
+        """
+        self.Masse = masse
+        self.A_Moteur = accmotor
+        self.Hauteur = hauteur
+        self.Longueur = longueur
+        self.Largeur = largeur
+        self.Cx = cx
+        self.Cz = cz
+        self.Sx = self.Hauteur * self.Largeur
+        self.Sz = self.Largeur * self.Longueur
+        self.Mu = frot
+        self.K = (0.5 * self.Cx * rho * self.Sx) / self.Masse
+        self.T = self.Cx * self.Sx
+        self.P = self.Sz * self.Cz
+        self.Booster = booster
+        self.Nom = name
+
+        if aileron:
+            self.Sz += 0.8
+            self.Masse += 30
+            self.Cz *= 1.1
+            self.P = self.Sz * self.Cz
+
+        if jupe:
+            self.Masse += 15
+            self.Cx *= 0.95
+            self.K = (0.5 * self.Cx * rho * self.Sx) / self.Masse
+            self.T = self.Cx * self.Sx
+
+    def boost(self, partie: Partie):
+        """
+        Active le booster
+        """
+        if self.Booster.Partie == partie:
+            self.A_Moteur *= self.Booster.Boost
+            self.Booster.Utilisé = True
+    
+    def deboost(self):
+        """
+        Désactive le booster et le rend inutilisable
+        """
+        if self.Booster.Utilisé:
+            self.A_Moteur *= 1 / self.Booster.Boost
+            self.Booster.Partie = Partie.AUCUN
+            self.Booster.Utilisé = False
+
+    def __str__(self):
+        return f"{self.Nom}"
+    
+class Vt:
+    """
+    Vitesse en fonction du temps
+    """
+    def __init__(self, vitesse_x: List[float], vitesse_y: List[float], temps: List[float]):
+        # Uniformisation des longueurs des listes
+        len_max = max(len(vitesse_x), len(vitesse_y), len(temps))
+        self.Vx = vitesse_x + [0.0] * (len_max - len(vitesse_x))
+        self.Vy = vitesse_y + [0.0] * (len_max - len(vitesse_y))
+        self.Temps = temps + [0.0] * (len_max - len(temps))
+        v = []
+        try:
+            v = [np.sqrt(vitesse_x[i] ** 2 + vitesse_y[i] ** 2) for i in range(len(temps))]
+        except IndexError:
+            pass
+        self.V = v + [0.0] * (len_max - len(v))
+
+    def plot_vx(self, nom_partie = ""):
+        plt.plot(self.Temps, self.Vx)
+        plt.title(f"Vitesse horizontale en fonction du temps ({nom_partie})")
+        plt.grid(True)
+        plt.xlabel("Temps (s)")
+        plt.ylabel("Vitesse (m/s)")
+        plt.show()
+
+    def plot_vy(self, nom_partie = ""):
+        plt.plot(self.Temps, self.Vy)
+        plt.title(f"Vitesse verticale en fonction du temps ({nom_partie})")
+        plt.grid(True)
+        plt.xlabel("Temps (s)")
+        plt.ylabel("Vitesse (m/s)")
+        plt.show()
+
+    def plot(self, nom_partie = ""):
+        plt.plot(self.Temps, self.V)
+        plt.title(f"Vitesse en fonction du temps ({nom_partie})")
+        plt.grid(True)
+        plt.xlabel("Temps (s)")
+        plt.ylabel("Vitesse (m/s)")
+        plt.show()
+
+
+class Xt:
+    """
+    Position x en fonction du temps
+    """
+    def __init__(self, position_x: List[float], temps: List[float]):
+        self.X = position_x
+        self.Temps = temps
+
+    def plot(self, nom_partie = ""):
+        plt.plot(self.Temps, self.X)
+        plt.title(f"Position X en fonction du temps ({nom_partie})")
+        plt.grid(True)
+        plt.xlabel("Temps (s)")
+        plt.ylabel("Distance (m)")
+        plt.show()
+
+
+class Yx:
+    """
+    Position y en fonction de x
+    """
+    def __init__(self, position_y: List[float], position_x: List[float]):
+        self.X = position_x
+        self.Y = position_y
+
+    def plot(self, nom_partie = ""):
+        plt.plot(self.X, self.Y)
+        plt.title(f"Position y en fonction de x ({nom_partie})")
+        plt.grid(True)
+        plt.xlabel("Position (x)")
+        plt.ylabel("Position (y)")
+        plt.show()
+
+
+class At:
+    """
+    Angle en fonction du temps
+    """
+    def __init__(self, angle_theta: List[float], temps: List[float]):
+        self.Theta = angle_theta
+        self.Temps = temps
+
+    def plot(self, nom_partie = ""):
+        plt.plot(self.Temps, self.Theta)
+        plt.title(f"Angle θ en fonction du temps ({nom_partie})")
+        plt.grid(True)
+        plt.xlabel("Temps (s)")
+        plt.ylabel("θ (radians)")
+        plt.show()
+
+
+
+class Wt:
+    """
+    Vitesse en fonction du temps
+    """
+    def __init__(self, vitess_angulaire: List[float], temps: List[float]):
+        self.Omega = vitess_angulaire
+        self.Temps = temps
+
+    def plot(self, nom_partie = ""):
+        plt.plot(self.Temps, self.Omega)
+        plt.title(f"Vitesse en fonction du temps ({nom_partie})")
+        plt.grid(True)
+        plt.xlabel("Temps (s)")
+        plt.ylabel("Vitesse (m/s)")
+        plt.show()
+
+
+
+def vitesse_en_x(vt: Vt, xt: Xt, x: float) -> Tuple[float, float, float]:
+    """
+    Calculer la vitesse en une position x
+
+    :param vt: Objet de vitesse en fonction du temps
+    :param xt: Objet de posiion en fonction du temps
+    :param x: Position où obtenir la vitesse
+
+    :return: Vitesse à la position x
+    """
+    for i in range(len(xt.X)):
+        if xt.X[i] >= x:
+            return vt.Vx[i], vt.Vy[i], vt.V[i]
+        
+
+
+def temps_en_x(xt: Xt, x: float) -> float:
+    """
+    Retourne le temps en une position x
+
+    :param xt: Objet de position en fonction du temps
+    :param x: Position où obtenir le temps
+
+    :return: Temps en x
+    """
+    r = -1
+    for i in range(len(xt.X)):
+        if xt.X[i] >= x:
+            r = xt.Temps[i]
+            break
+    return r
+
+
+def temps_en_a(at: At, a: float) -> float:
+    """
+    Retourne le temps en un angle a
+
+    :param at: Objet d'angle en fonction du temps
+    :param a: Position où obtenir le temps
+
+    :return: Temps en x
+    """
+    r = -1
+    for i in range(len(at.Theta)):
+        if at.Theta[i] >= a:
+            r = at.Temps[i]
+            break
+    return r
+        
+
+def vitesse_en_a(wt: Wt, at: At, a: float) -> float:
+    """
+    Calculer la vitesse en un angle a
+
+    :param wt: Objet de vitesse angulaire en fonction du temps
+    :param at: Objet d'angle en fonction du temps
+    :param a: Angle où obtenir la vitesse
+
+    :return: Vitesse à la position x
+    """
+    r = -1
+    for i in range(len(at.Theta)):
+        if at.Theta[i] >= a:
+            r = wt.Omega[i]
+            break
+    return r
+
+
+def interpolate(x_values, y_values, x):
+    """
+    Return the y value corresponding to the given x value without interpolation.
+
+    Args:
+    x_values (list): List of x values.
+    y_values (list): List of corresponding y values.
+    x (float): The x value for which to return the y value.
+
+    Returns:
+    float: The y value corresponding to the given x value or the first y value above x.
+    """
+    for i in range(len(x_values)):
+        if x_values[i] >= x:
+            return y_values[i]
+    return y_values[-1]
+
+# Différentes voitures et leurs spécificités
+
+dodge = Voiture(1760, 5.1, 1.35, 5.28, 1.95, 0.38, 0.3, 0.1, "Dodge", Booster(Partie.PENTE), False, False)
+supra = Voiture(1615, 5, 1.27, 4.51, 1.81, 0.29, 0.3, 0.1, "Supra", Booster(Partie.PENTE), False, False)
+yenko = Voiture(1498, 5.3, 1.3, 4.72, 1.88, 0.35, 0.3, 0.1, "Yenko", Booster(Partie.PENTE), False, False)
+mazda = Voiture(1385, 5.2, 1.23, 4.3, 1.75, 0.28, 0.3, 0.1, "Mazda", Booster(Partie.PENTE), False, False)
+nissan = Voiture(1540, 5.8, 1.36, 4.6, 1.79, 0.34, 0.3, 0.1, "Nissan", Booster(Partie.PENTE), False, False)
+lancer= Voiture(1600, 5, 1.48, 4.51, 1.81, 0.28, 0.3, 0.1, "Lancer", Booster(Partie.PENTE), False, False)
+voitures = [dodge, supra, yenko, mazda, nissan, lancer]
+
+selected_car: Voiture = voitures[0]
+    
+class Circuit:
+    """
+    Circuit sans frottements
+    """
+    @staticmethod
+    def pente(voiture: Voiture, v0: float, alpha: float, t_max: int, t_e: int) -> Tuple[Vt, Xt]:
+        """
+        Calcule la vitesse et la position en fonction du temps dans la pente
+
+        :param voiture: Voiture à utiliser pour cette portion de circuit
+        :param v0: Vitesse initiale
+        :param alpha: Angle de la pente en degrés
+        :param t_max: Temps max
+        :param t_e: Echantillonnage
+
+        :return: Vitesse et position x en fonction du temps
+        """
+        voiture.boost(Partie.PENTE)
+
+        alpha = math.radians(alpha)
+
+        # Définir la fonction qui représente l'équation différentielle
+        def model(v, t):
+            dvdt = voiture.A_Moteur + g * np.sin(alpha) - voiture.Mu * g * np.cos(alpha) - voiture.K * v**2
+            return dvdt
+
+        # Conditions initiales
+        t = np.linspace(0, t_max, t_e)  # Intervalle de temps
+
+        # Résoudre l'équation différentielle
+        v = odeint(model, v0, t)
+
+        # Intégrer numériquement la vitesse pour obtenir la position en fonction du temps
+        dt = t[1] - t[0]
+        x = np.cumsum(v[:, 0] * dt)
+
+        voiture.deboost()
+
+        return Vt(list(v[:, 0]), [], t.tolist()), Xt(x.tolist(), t.tolist())
+    
+    @staticmethod
+    def looping(voiture: Voiture, theta0: float, theta_prime0: float, l: float, t_max: int, t_e: int) -> Tuple[At, Wt]:
+        """
+        Calcule l'angle et la vitesse linéaire en fonction du temps dans le looping
+
+        :param voiture: Voiture à utiliser pour cette portion de circuit
+        :param theta0: Angle initial
+        :param theta_prime0: Vitesse angulaire initiale
+        :param l: Rayon du looping
+        :param t_max: Temps max
+        :param t_e: Echantillonnage
+
+        :return: Angle et vitesse en fonction du temps
+        """
+        voiture.boost(Partie.LOOPING)
+
+        # Déclaration des conditions initiales
+        theta0 = np.radians(theta0)  # angle initial en radians
+        p0 = [theta0, theta_prime0]
+
+        # Fonction représentant le système d'équations différentielles
+        def pendule(Y, t):
+            theta, theta_dot = Y
+            dtheta_dt = theta_dot
+            dtheta_dot_dt = (1/l) * (voiture.A_Moteur - (voiture.K * (l * theta_dot) ** 2) / (2 * voiture.Masse) - voiture.Mu * g * np.cos(theta) - g * np.sin(theta) )
+            return [dtheta_dt, dtheta_dot_dt]
+
+        # Résolution de l'équation différentielle
+        t = np.linspace(0, t_max, t_e)  # temps de 0 à 10 secondes, avec 1000 points
+        solution = odeint(pendule, p0, t)
+
+        # Extraction des résultats
+        angle, vitesse = solution.T
+        vitesse *= l
+
+        voiture.deboost()
+        
+        return At(angle, t.tolist()), Wt(vitesse, t.tolist())
+    
+    @staticmethod
+    def ravin(voiture: Voiture, vx0: float, vy0: float, t_max: int, t_e: int) -> Tuple[Vt, Yx]:
+        """
+        Calcule la vitesse et la position en fonction du temps dans le ravin
+
+        :param voiture: Voiture à utiliser pour cette portion de circuit
+        :param vx0: Vitesse initiale en x
+        :param vy0: Vitesse initiale en y
+        :param t_max: Temps max
+        :param t_e: Echantillonnage
+
+        :return: Vitesse en fonction du temps et la position y en fonction de x
+        """
+        voiture.boost(Partie.RAVIN)
+
+        # Conditions initiales
+        p0 = vx0, vy0
+
+        # Définir la fonction qui représente l'équation différentielle
+        def model(X, t):
+            vx, vy = X
+            dvxdt = (rho * np.sqrt(vx**2 + vy**2))/(2 * voiture.Masse) * vx * (voiture.T - voiture.P)
+            dvydt = (rho * np.sqrt(vx**2 + vy**2))/(2 * voiture.Masse) * vy * (voiture.T - voiture.P) - g
+            return dvxdt, dvydt
+
+        # Conditions initiales
+        t = np.linspace(0, t_max, t_e)  # Intervalle de temps
+
+        # Résoudre l'équation différentielle
+        ret = odeint(model, p0, t)
+        vx, vy = ret.T
+        
+        # Intégration numérique
+        x = np.cumsum(vx) * (t[1] - t[0])  
+        y = np.cumsum(vy) * (t[1] - t[0])
+
+        voiture.deboost()
+
+        return Vt(list(vx), list(vy), t.tolist()), Yx(y, x)
+
+    @staticmethod
+    def fin_de_piste(voiture: Voiture, v0: float, x0: float, t_max: int, t_e: int) -> Tuple[Vt, Xt]:
+        """
+        Calcule la vitesse et la posiion en fonction du temps en fin de piste
+
+        :param voiture: Voiture à utiliser pour cette portion de circuit
+        :param v0: Vitesse initiale
+        :param x0: Position initiale
+        :param t_max: Temps max
+        :param t_e: Echantillonnage
+
+        :return: Vitesse et position en fonction du temps
+        """
+        voiture.boost(Partie.FIN)
+
+        # Définir la fonction qui représente l'équation différentielle
+        def model(v, t):
+            dvdt = voiture.A_Moteur - voiture.Mu * g - voiture.K * v**2
+            return dvdt
+
+        # Conditions initiales
+        t = np.linspace(0, t_max, t_e)  # Intervalle de temps
+
+        # Résoudre l'équation différentielle
+        v = odeint(model, v0, t)
+
+        # Intégrer numériquement la vitesse pour obtenir la position en fonction du temps
+        dt = t[1] - t[0]
+        x = np.cumsum(v[:, 0] * dt) + x0
+
+        voiture.deboost()
+
+        return Vt(list(v[:, 0]), [], t.tolist()), Xt(x.tolist(), t.tolist())
+
+
+class CircuitSansFrottements:
+    """
+    Circuit sans frottements
+    """
+    @staticmethod
+    def pente(voiture: Voiture, v0: float, alpha: float, t_max: int, t_e: int) -> Tuple[Vt, Xt]:
+        """
+        Calcule la vitesse jusqu'à t_max dans la pente
+
+        :param voiture: Voiture à utiliser pour cette portion de circuit
+        :param v0: Vitesse initiale
+        :param alpha: Angle de la pente en degrés
+        :param t_max: Temps max
+        :param t_e: Echantillonnage
+
+        :return: Vitesse en fonction du temps
+        """
+        voiture.boost(Partie.PENTE)
+
+        alpha = math.radians(alpha)
+
+        # Conditions initiales
+        t = np.linspace(0, t_max, t_e)  # Intervalle de temps
+
+        # Equations de mouvements   
+        vx = [i * (voiture.A_Moteur + g * math.sin(alpha)) + v0 for i in t]
+
+        x = [0.5 * i**2 * (voiture.A_Moteur + g * math.sin(alpha)) + i * v0 for i in t]
+
+        voiture.deboost()
+        
+        return Vt(vx, [], t.tolist()), Xt(x, t.tolist())
+    
+    @staticmethod
+    def looping(voiture: Voiture, theta0: float, theta_prime0: float, l: float, t_max: int, t_e: int) -> Tuple[At, Wt]:
+        """
+        Calcule l'angle en fonction du temps dans le looping
+
+        :param voiture: Voiture à utiliser pour cette portion de circuit
+        :param theta0: Angle initial
+        :param theta_prime0: Vitesse angulaire initiale
+        :param l: Rayon du looping
+        :param t_max: Temps max
+        :param t_e: Echantillonnage
+
+        :return: Vitesse en fonction du temps, et la position y en fonction de x
+        """
+        voiture.boost(Partie.LOOPING)
+
+        # Déclaration des conditions initiales
+        theta0 = np.radians(theta0)  # angle initial en radians
+        p0 = [theta0, theta_prime0]
+
+        # Fonction représentant le système d'équations différentielles
+        def pendule(Y, t):
+            theta, theta_dot = Y
+            dtheta_dt = theta_dot
+            dtheta_dot_dt = (1/l) * (voiture.A_Moteur - g * np.sin(theta))
+            return [dtheta_dt, dtheta_dot_dt]
+
+        # Résolution de l'équation différentielle
+        t = np.linspace(0, t_max, t_e)  # temps de 0 à 10 secondes, avec 1000 points
+        solution = odeint(pendule, p0, t)
+
+        # Extraction des résultats
+        angle, vitesse = solution.T
+        vitesse *= l
+
+        voiture.deboost()
+        
+        return At(angle, t.tolist()), Wt(vitesse, t.tolist())
+    
+    @staticmethod
+    def ravin(voiture: Voiture, vx0: float, vy0: float, t_max: int, t_e: int) -> Tuple[Vt, Yx]:
+        """
+        Calcule la vitesse et la position à un instant t dans le ravin
+
+        :param voiture: Voiture à utiliser pour cette portion de circuit
+        :param vx0: Vitesse initiale en x
+        :param vy0: Vitesse initiale en y
+        :param t_max: Temps max
+        :param t_e: Echantillonnage
+
+        :return: Vitesse en fonction du temps, et la position y en fonction de x
+        """
+        voiture.boost(Partie.RAVIN)
+
+        # Conditions initiales
+        p0 = vx0, vy0
+
+        # Conditions initiales
+        t = np.linspace(0, t_max, t_e)  # Intervalle de temps
+
+        # Equations de mouvement
+        vx = [vx0 for i in t]
+        vy = [-g * i + vy0 for i in t]
+
+        x = [vx0 * i for i in t]
+        y = [0.5 * -g * i**2 + vy0 * i for i in t]
+
+        voiture.deboost()
+
+        return Vt(vx, vy, t.tolist()), Yx(y, x)
+
+    @staticmethod
+    def fin_de_piste(voiture: Voiture, v0: float, x0: float, t_max: int, t_e: int) -> Tuple[Vt, Xt]:
+        """
+        Calcule la vitesse jusqu'à t_max en fin de piste
+
+        :param voiture: Voiture à utiliser pour cette portion de circuit
+        :param v0: Vitesse initiale
+        :param x0: Position initiale
+        :param t_max: Temps max
+        :param t_e: Echantillonnage
+
+        :return: Vitesse et position en fonction du temps
+        """
+        voiture.boost(Partie.FIN)
+
+        # Conditions initiales
+        t = np.linspace(0, t_max, t_e)  # Intervalle de temps
+
+        # Equation de mouvement
+        vx = [i * voiture.A_Moteur + v0 for i in t]
+        x = [0.5 * i**2 * voiture.A_Moteur + i * v0 + x0 for i in t]
+
+        voiture.deboost()
+
+        return Vt(vx, [], t.tolist()), Xt(x, t.tolist())
+
+def temps_total(voiture: Voiture, 
+                args_pente: Tuple[float, float, int], 
+                args_looping: Tuple[float, float, float, int],
+                args_ravin: Tuple[float, float, int],
+                args_fin: Tuple[float, int]) -> float:
+
+    _, p2, p3 = args_pente
+    if not sans_frottements:
+        res_p_v, res_p_p = Circuit.pente(voiture, 0, p2, p3, e_t)
+    else:
+        res_p_v, res_p_p = CircuitSansFrottements.pente(voiture, 0, p2, p3, e_t)
+    d1 = temps_en_x(res_p_p, 31)
+    f1, _, _ = vitesse_en_x(res_p_v, res_p_p, 31)
+
+    _, _, l3, l4 = args_looping
+    l2 = f1 / l3
+    if not sans_frottements:
+        res_l_a, res_l_v = Circuit.looping(voiture, 0, l2, l3, l4, e_t)
+    else:
+        res_l_a, res_l_v = CircuitSansFrottements.looping(voiture, 0, l2, l3, l4, e_t)
+    d2 = temps_en_a(res_l_a, 2 * np.pi)
+    f2 = vitesse_en_a(res_l_v, res_l_a, 2 * np.pi)
+
+    _, _, r3 = args_ravin
+    r1 = f2
+    if not sans_frottements:
+        res_r_v, res_r_p = Circuit.ravin(voiture, r1, 0, r3, e_t)
+    else:
+        res_r_v, res_r_p = CircuitSansFrottements.ravin(voiture, r1, 0, r3, e_t)
+
+    i3 = np.argmax(res_r_p.Y < -1.0)
+    x3 = res_r_p.X[i3] - 9
+    d3 = res_r_v.Temps[i3]
+    _, p2 = args_fin
+
+    if not sans_frottements:
+        res_f_v, res_f_p = Circuit.fin_de_piste(voiture, 0, x3, p2, e_t)
+    else:
+        res_f_v, res_f_p = CircuitSansFrottements.fin_de_piste(voiture, 0, x3, p2, e_t)
+
+    d4 = temps_en_x(res_f_p, 10 - voiture.Longueur / 2)
+    
+    return d1 + d2 + d3 + d4
+
+class Résultat:
+    def __init__(self, score: float, nom: str, partie_booster: Partie, aileron: bool, jupe: bool):
+        self.Score = score
+        self.Nom = nom
+        self.PartieBooster = partie_booster
+        self.Aileron = aileron
+        self.Jupe = jupe
+
+    def __str__(self):
+        return f"{self.Nom} ; {self.Score:.2f}s ; Booster > {self.PartieBooster} ; Aileron > {self.Aileron} ; Jupe > {self.Jupe}"
+
+
+def test_all() -> Tuple[Résultat, List[Résultat]]:
+    # Ce code teste toutes les combinaisons possibles et retient la meilleur
+    résultats: List[Résultat] = []
+    best = Résultat(2.0**8, "", Partie.AUCUN, False, False)
+    for j in range(2):
+        for a in range(2):
+            for p in Partie:
+                j = bool(j)
+                a = bool(a)
+                dodge = Voiture(1760, 5.1, 1.35, 5.28, 1.95, 0.38, 0.3, 0.1, "Dodge", Booster(p), a, j)
+                supra = Voiture(1615, 5, 1.27, 4.51, 1.81, 0.29, 0.3, 0.1, "Supra", Booster(p), a, j)
+                yenko = Voiture(1498, 5.3, 1.3, 4.72, 1.88, 0.35, 0.3, 0.1, "Yenko", Booster(p), a, j)
+                mazda = Voiture(1385, 5.2, 1.23, 4.3, 1.75, 0.28, 0.3, 0.1, "Mazda", Booster(p), a, j)
+                nissan = Voiture(1540, 5.8, 1.36, 4.6, 1.79, 0.34, 0.3, 0.1, "Nissan", Booster(p), a, j)
+                lancer = Voiture(1600, 5, 4.51, 1.81, 1.48, 0.28, 0.3, 0.1, "Lancer", Booster(p), a, j)
+                voitures = [dodge, supra, yenko, mazda, nissan, lancer]
+
+                for v in voitures:
+                    t_t = temps_total(v, (0, 3.69, 10), (0, 0, 6, 10), (0, 0, 10), (0, 10))
+                    r = Résultat(t_t, v.Nom, p, a, j)
+                    résultats.append(r)
+                    if t_t < best.Score:
+                        best = r
+
+    return best, résultats
+
+best_score = 0.0
+best_no_mod_score = 0.0
